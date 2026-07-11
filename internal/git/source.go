@@ -110,6 +110,7 @@ func (s *Source) open() error {
 		Auth:          s.auth,
 		ReferenceName: plumbing.NewBranchReferenceName(s.opts.Branch),
 		SingleBranch:  true,
+		Depth:         1,
 	})
 	if err != nil {
 		return fmt.Errorf("git: cloning %s: %w", s.opts.URL, err)
