@@ -8,6 +8,7 @@ import (
 	"github.com/hashicorp/nomad/api"
 
 	"github.com/evansmurithi/caravan/internal/job"
+	"github.com/evansmurithi/caravan/internal/volume"
 )
 
 // JobPlan pairs a job with the diff computed against the cluster during a
@@ -29,23 +30,40 @@ func (p JobPlan) Changed() bool {
 	return p.Diff != nil && p.Diff.Type != "None"
 }
 
-// Diff syncs Git, renders the jobs, and plans each against the cluster without
-// applying anything. When prune is enabled, managed jobs missing from Git are
-// returned as orphans. The returned error carries any job-discovery problems;
-// per-job plan errors are attached to the individual JobPlan entries.
-func (r *Reconciler) Diff(ctx context.Context) (commit string, plans []JobPlan, err error) {
-	commit, err = r.git.Sync()
+// DiffResult is the outcome of a read-only diff pass.
+type DiffResult struct {
+	Commit  string
+	Volumes []VolumePlan
+	Jobs    []JobPlan
+}
+
+// Diff syncs Git, renders the volumes and jobs, and plans each against the
+// cluster without applying anything. When prune is enabled, managed jobs
+// missing from Git are returned as orphans (volumes are never pruned). The
+// returned error carries any discovery problems; per-volume and per-job errors
+// are attached to the individual plan entries.
+func (r *Reconciler) Diff(ctx context.Context) (DiffResult, error) {
+	var out DiffResult
+	commit, err := r.git.Sync()
 	if err != nil {
-		return "", nil, fmt.Errorf("git sync: %w", err)
+		return out, fmt.Errorf("git sync: %w", err)
 	}
+	out.Commit = commit
 
 	root, baseDir := r.paths()
-	desired, discoverErr := r.filesR(root, baseDir)
+	set, discoverErr := r.discover(root, baseDir, volume.NewNodes(r.nomad.Nodes))
 
-	desiredIDs := make(map[nsKey]bool, len(desired))
-	for _, d := range desired {
+	out.Volumes = r.planVolumes(ctx, set.Volumes)
+	if err := ctx.Err(); err != nil {
+		return out, err
+	}
+
+	var plans []JobPlan
+	desiredIDs := make(map[nsKey]bool, len(set.Jobs))
+	for _, d := range set.Jobs {
 		if err := ctx.Err(); err != nil {
-			return commit, plans, err
+			out.Jobs = plans
+			return out, err
 		}
 		ns := d.Namespace(r.cfg.NomadNamespace)
 		desiredIDs[nsKey{ns, d.ID()}] = true
@@ -63,7 +81,8 @@ func (r *Reconciler) Diff(ctx context.Context) (commit string, plans []JobPlan, 
 		plans = append(plans, r.orphans(ctx, desiredIDs)...)
 	}
 
-	return commit, plans, discoverErr
+	out.Jobs = plans
+	return out, discoverErr
 }
 
 // orphans lists managed jobs that are present in the cluster but absent from

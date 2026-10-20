@@ -1,9 +1,11 @@
-package job
+package spec
 
 import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/evansmurithi/caravan/internal/job"
 )
 
 const jobWithFileFunc = `job "example" {
@@ -37,7 +39,8 @@ func TestDiscoverParsesFileFunction(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	desired, err := Discover(dir, dir)
+	set, err := Discover(dir, dir, nil)
+	desired := set.Jobs
 	if err != nil {
 		t.Fatalf("discover: %v", err)
 	}
@@ -49,7 +52,7 @@ func TestDiscoverParsesFileFunction(t *testing.T) {
 	if d.ID() != "example" {
 		t.Fatalf("expected job ID 'example', got %q", d.ID())
 	}
-	if !IsManaged(d.Job.Meta) {
+	if !job.IsManaged(d.Job.Meta) {
 		t.Fatalf("expected job to be stamped as managed")
 	}
 
@@ -109,7 +112,8 @@ func TestDiscoverResolvesFilesAgainstBaseDir(t *testing.T) {
 	mustWrite(t, filepath.Join(root, "alloy", "configs", "agent.alloy"), alloyCfg)
 
 	// Scan the whole tree, resolving file() against the scan root.
-	desired, err := Discover(root, root)
+	set, err := Discover(root, root, nil)
+	desired := set.Jobs
 	if err != nil {
 		t.Fatalf("discover: %v", err)
 	}
@@ -159,12 +163,13 @@ func TestNamespaceComesFromJobSpec(t *testing.T) {
 	mustWrite(t, filepath.Join(dir, "with-ns.nomad"), jobWithNamespace)
 	mustWrite(t, filepath.Join(dir, "no-ns.nomad"), jobWithoutNamespace)
 
-	desired, err := Discover(dir, dir)
+	set, err := Discover(dir, dir, nil)
+	desired := set.Jobs
 	if err != nil {
 		t.Fatalf("discover: %v", err)
 	}
 
-	byID := map[string]Desired{}
+	byID := map[string]job.Desired{}
 	for _, d := range desired {
 		byID[d.ID()] = d
 	}

@@ -1,5 +1,7 @@
 // Package nomad wraps the HashiCorp Nomad HTTP API with the small surface
-// caravan needs: parsing HCL, planning diffs, registering and stopping jobs.
+// caravan needs: parsing HCL, planning diffs, registering and stopping jobs, and
+// registering host volumes. There is deliberately no way to deregister or
+// delete a host volume.
 package nomad
 
 import (
@@ -92,6 +94,46 @@ func (c *Client) Stop(jobID, namespace string, purge bool) error {
 		return fmt.Errorf("nomad: stopping job %s: %w", jobID, err)
 	}
 	return nil
+}
+
+// Nodes lists the cluster's nodes.
+func (c *Client) Nodes() ([]*api.NodeListStub, error) {
+	stubs, _, err := c.api.Nodes().List(nil)
+	if err != nil {
+		return nil, fmt.Errorf("nomad: listing nodes: %w", err)
+	}
+	return stubs, nil
+}
+
+// HostVolumes lists the dynamic host volumes in a namespace.
+func (c *Client) HostVolumes(namespace string) ([]*api.HostVolumeStub, error) {
+	stubs, _, err := c.api.HostVolumes().List(&api.HostVolumeListRequest{}, c.queryOpts(namespace))
+	if err != nil {
+		return nil, fmt.Errorf("nomad: listing host volumes: %w", err)
+	}
+	return stubs, nil
+}
+
+// HostVolume fetches a dynamic host volume by ID.
+func (c *Client) HostVolume(id, namespace string) (*api.HostVolume, error) {
+	vol, _, err := c.api.HostVolumes().Get(id, c.queryOpts(namespace))
+	if err != nil {
+		return nil, fmt.Errorf("nomad: fetching host volume %s: %w", id, err)
+	}
+	return vol, nil
+}
+
+// RegisterHostVolume registers an existing host path as a dynamic host
+// volume, or updates the volume when vol.ID is set.
+func (c *Client) RegisterHostVolume(vol *api.HostVolume) (*api.HostVolumeRegisterResponse, error) {
+	resp, _, err := c.api.HostVolumes().Register(
+		&api.HostVolumeRegisterRequest{Volume: vol},
+		c.writeOptsNS(vol.Namespace),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("nomad: registering host volume %s: %w", vol.Name, err)
+	}
+	return resp, nil
 }
 
 func (c *Client) writeOpts(job *api.Job) *api.WriteOptions {

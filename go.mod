@@ -3,11 +3,14 @@ module github.com/evansmurithi/caravan
 go 1.26.5
 
 require (
+	github.com/dustin/go-humanize v1.0.1
 	github.com/go-git/go-git/v5 v5.19.1
+	github.com/hashicorp/hcl/v2 v2.20.2-nomad-1
 	github.com/hashicorp/nomad v1.11.3
 	github.com/hashicorp/nomad/api v0.0.0-20260707141449-247bf86dd082
 	github.com/spf13/pflag v1.0.10
 	github.com/spf13/viper v1.21.0
+	github.com/zclconf/go-cty v1.18.0
 )
 
 require (
@@ -35,7 +38,6 @@ require (
 	github.com/hashicorp/go-cty-funcs v0.1.0 // indirect
 	github.com/hashicorp/go-multierror v1.1.1 // indirect
 	github.com/hashicorp/go-rootcerts v1.0.2 // indirect
-	github.com/hashicorp/hcl/v2 v2.20.2-nomad-1 // indirect
 	github.com/jbenet/go-context v0.0.0-20150711004518-d14ea06fba99 // indirect
 	github.com/kevinburke/ssh_config v1.2.0 // indirect
 	github.com/klauspost/cpuid/v2 v2.3.0 // indirect
@@ -52,7 +54,6 @@ require (
 	github.com/spf13/cast v1.10.0 // indirect
 	github.com/subosito/gotenv v1.6.0 // indirect
 	github.com/xanzy/ssh-agent v0.3.3 // indirect
-	github.com/zclconf/go-cty v1.18.0 // indirect
 	github.com/zclconf/go-cty-yaml v1.2.0 // indirect
 	go.yaml.in/yaml/v3 v3.0.4 // indirect
 	golang.org/x/crypto v0.54.0 // indirect
