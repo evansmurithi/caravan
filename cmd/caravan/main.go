@@ -124,6 +124,7 @@ func runLoop(ctx context.Context, cfg *config.Config, reconciler *reconcile.Reco
 		"mode", cfg.Mode,
 		"prune", cfg.Prune,
 		"sync_interval", cfg.SyncInterval,
+		"volume_host_path_prefixes", cfg.VolumeHostPathPrefixes,
 	)
 
 	if cfg.HealthAddr != "" && !cfg.Once {
@@ -145,18 +146,29 @@ func runLoop(ctx context.Context, cfg *config.Config, reconciler *reconcile.Reco
 }
 
 // runDiff performs a single read-only diff pass and prints the result. Any
-// error is returned so main can report it once; per-job errors are printed
-// inline alongside the jobs that parsed and planned successfully.
+// error is returned so main can report it once; per-volume and per-job errors
+// are printed inline alongside the specs that parsed and planned successfully.
 func runDiff(ctx context.Context, reconciler *reconcile.Reconciler) error {
-	commit, plans, err := reconciler.Diff(ctx)
+	out, err := reconciler.Diff(ctx)
 
 	color := isTerminal(os.Stdout)
-	if commit != "" {
-		fmt.Printf("caravan diff @ %s\n\n", shortCommit(commit))
+	if out.Commit != "" {
+		fmt.Printf("caravan diff @ %s\n\n", shortCommit(out.Commit))
 	}
 
 	changed := 0
-	for _, p := range plans {
+	for _, p := range out.Volumes {
+		switch {
+		case p.Err != nil:
+			changed++
+			fmt.Printf("! Volume %q (%s, node %s): %v\n\n", p.Name, p.Namespace, p.Node, p.Err)
+		case p.Changed():
+			changed++
+			fmt.Println(reconcile.RenderVolumeDiff(p, color))
+			fmt.Println()
+		}
+	}
+	for _, p := range out.Jobs {
 		switch {
 		case p.Err != nil:
 			changed++
@@ -246,6 +258,11 @@ func healthServer(addr string, r *reconcile.Reconciler) *http.Server {
 			"pending":   last.Planned,
 			"pruned":    last.Pruned,
 			"unchanged": last.Unchanged,
+			"volumes": map[string]any{
+				"applied":   last.VolumesApplied,
+				"pending":   last.VolumesPlanned,
+				"unchanged": last.VolumesUnchanged,
+			},
 		}
 		if last.Err != nil {
 			payload["error"] = last.Err.Error()

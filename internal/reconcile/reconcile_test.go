@@ -2,6 +2,7 @@ package reconcile
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"log/slog"
 	"testing"
@@ -11,6 +12,8 @@ import (
 
 	"github.com/evansmurithi/caravan/internal/config"
 	"github.com/evansmurithi/caravan/internal/job"
+	"github.com/evansmurithi/caravan/internal/spec"
+	"github.com/evansmurithi/caravan/internal/volume"
 )
 
 type fakeGit struct{ commit string }
@@ -24,8 +27,16 @@ type fakeNomad struct {
 	// existing is what List returns.
 	existing []*api.JobListStub
 
+	// nodes is what Nodes returns; volumes is the cluster's host volumes.
+	nodes   []*api.NodeListStub
+	volumes []*api.HostVolume
+
 	registered []string
 	stopped    []string
+	// volRegistered holds every volume passed to RegisterHostVolume.
+	volRegistered []*api.HostVolume
+	// calls records the order of write calls ("volume:<name>", "job:<id>").
+	calls []string
 }
 
 func (f *fakeNomad) Plan(j *api.Job) (*api.JobPlanResponse, error) {
@@ -38,6 +49,7 @@ func (f *fakeNomad) Plan(j *api.Job) (*api.JobPlanResponse, error) {
 
 func (f *fakeNomad) Register(j *api.Job) (*api.JobRegisterResponse, error) {
 	f.registered = append(f.registered, *j.ID)
+	f.calls = append(f.calls, "job:"+*j.ID)
 	return &api.JobRegisterResponse{EvalID: "eval-" + *j.ID}, nil
 }
 
@@ -46,6 +58,37 @@ func (f *fakeNomad) List(string) ([]*api.JobListStub, error) { return f.existing
 func (f *fakeNomad) Stop(jobID, _ string, _ bool) error {
 	f.stopped = append(f.stopped, jobID)
 	return nil
+}
+
+func (f *fakeNomad) Nodes() ([]*api.NodeListStub, error) { return f.nodes, nil }
+
+func (f *fakeNomad) HostVolumes(ns string) ([]*api.HostVolumeStub, error) {
+	var out []*api.HostVolumeStub
+	for _, v := range f.volumes {
+		if v.Namespace != ns {
+			continue
+		}
+		out = append(out, &api.HostVolumeStub{
+			Namespace: v.Namespace, ID: v.ID, Name: v.Name,
+			PluginID: v.PluginID, NodeID: v.NodeID,
+		})
+	}
+	return out, nil
+}
+
+func (f *fakeNomad) HostVolume(id, _ string) (*api.HostVolume, error) {
+	for _, v := range f.volumes {
+		if v.ID == id {
+			return v, nil
+		}
+	}
+	return nil, fmt.Errorf("volume %s not found", id)
+}
+
+func (f *fakeNomad) RegisterHostVolume(v *api.HostVolume) (*api.HostVolumeRegisterResponse, error) {
+	f.volRegistered = append(f.volRegistered, v)
+	f.calls = append(f.calls, "volume:"+v.Name)
+	return &api.HostVolumeRegisterResponse{Volume: v}, nil
 }
 
 func desiredJob(id string) job.Desired {
@@ -58,8 +101,12 @@ func desiredJob(id string) job.Desired {
 func strptr(s string) *string { return &s }
 
 func newTestReconciler(cfg *config.Config, nomad NomadClient, desired []job.Desired) *Reconciler {
+	return newSpecReconciler(cfg, nomad, spec.Set{Jobs: desired})
+}
+
+func newSpecReconciler(cfg *config.Config, nomad NomadClient, set spec.Set) *Reconciler {
 	r := New(cfg, &fakeGit{commit: "abc123"}, nomad, slog.New(slog.NewTextHandler(io.Discard, nil)))
-	r.filesR = func(string, string) ([]job.Desired, error) { return desired, nil }
+	r.discover = func(string, string, volume.NodeResolver) (spec.Set, error) { return set, nil }
 	return r
 }
 
@@ -129,16 +176,16 @@ func TestDiffReturnsPlansAndOrphans(t *testing.T) {
 		desiredJob("unchanged"),
 	})
 
-	commit, plans, err := r.Diff(context.Background())
+	out, err := r.Diff(context.Background())
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if commit != "abc123" {
-		t.Fatalf("expected commit abc123, got %q", commit)
+	if out.Commit != "abc123" {
+		t.Fatalf("expected commit abc123, got %q", out.Commit)
 	}
 
 	byID := map[string]JobPlan{}
-	for _, p := range plans {
+	for _, p := range out.Jobs {
 		byID[p.ID] = p
 	}
 

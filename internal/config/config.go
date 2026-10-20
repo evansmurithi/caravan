@@ -4,6 +4,7 @@ package config
 
 import (
 	"fmt"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -53,6 +54,11 @@ type Config struct {
 	SyncInterval time.Duration
 	Once         bool
 
+	// VolumeHostPathPrefixes is the allowlist of directories that host
+	// volume specs may register. A volume whose cleaned host_path is not at
+	// or under one of them is refused. Empty refuses every volume.
+	VolumeHostPathPrefixes []string
+
 	// Observability.
 	LogLevel  string
 	LogFormat string // "text" or "json"
@@ -94,6 +100,7 @@ func Load(args []string) (*Config, error) {
 	fs.Bool("prune", false, "Stop jobs previously managed by caravan that are no longer in Git")
 	fs.Duration("sync-interval", time.Minute, "How often to reconcile")
 	fs.Bool("once", false, "Run a single reconcile and exit")
+	fs.String("volume-host-path-prefixes", "", "Comma-separated directories host volume specs may register (required to register volumes)")
 
 	fs.String("log-level", "info", "Log level: debug, info, warn, error")
 	fs.String("log-format", "text", "Log format: text or json")
@@ -145,6 +152,8 @@ func Load(args []string) (*Config, error) {
 		SyncInterval: v.GetDuration("sync-interval"),
 		Once:         v.GetBool("once"),
 
+		VolumeHostPathPrefixes: splitList(v.GetString("volume-host-path-prefixes")),
+
 		LogLevel:   v.GetString("log-level"),
 		LogFormat:  v.GetString("log-format"),
 		HealthAddr: v.GetString("health-addr"),
@@ -166,5 +175,31 @@ func (c *Config) validate() error {
 	if c.SyncInterval <= 0 {
 		return fmt.Errorf("sync-interval must be positive, got %s", c.SyncInterval)
 	}
+	for i, p := range c.VolumeHostPathPrefixes {
+		if !filepath.IsAbs(p) {
+			return fmt.Errorf("volume-host-path-prefixes: %q must be an absolute path", p)
+		}
+		for _, elem := range strings.Split(p, "/") {
+			if elem == ".." {
+				return fmt.Errorf("volume-host-path-prefixes: %q must not contain \"..\"", p)
+			}
+		}
+		clean := filepath.Clean(p)
+		if clean == "/" {
+			return fmt.Errorf("volume-host-path-prefixes: \"/\" would allow any host path")
+		}
+		c.VolumeHostPathPrefixes[i] = clean
+	}
 	return nil
+}
+
+// splitList splits a comma-separated list, dropping empty entries.
+func splitList(s string) []string {
+	var out []string
+	for _, part := range strings.Split(s, ",") {
+		if part = strings.TrimSpace(part); part != "" {
+			out = append(out, part)
+		}
+	}
+	return out
 }

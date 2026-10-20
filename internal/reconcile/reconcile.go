@@ -1,5 +1,7 @@
-// Package reconcile implements caravan's control loop: sync Git, render jobs,
-// diff them against the cluster, and converge the cluster toward Git.
+// Package reconcile implements caravan's control loop: sync Git, render host
+// volumes and jobs, diff them against the cluster, and converge the cluster
+// toward Git. Volumes are registered before jobs so that jobs claiming them
+// can be placed.
 package reconcile
 
 import (
@@ -14,6 +16,8 @@ import (
 
 	"github.com/evansmurithi/caravan/internal/config"
 	"github.com/evansmurithi/caravan/internal/job"
+	"github.com/evansmurithi/caravan/internal/spec"
+	"github.com/evansmurithi/caravan/internal/volume"
 )
 
 // GitSource syncs a local checkout with a remote and reports its location.
@@ -28,15 +32,20 @@ type NomadClient interface {
 	Register(job *api.Job) (*api.JobRegisterResponse, error)
 	List(namespace string) ([]*api.JobListStub, error)
 	Stop(jobID, namespace string, purge bool) error
+
+	Nodes() ([]*api.NodeListStub, error)
+	HostVolumes(namespace string) ([]*api.HostVolumeStub, error)
+	HostVolume(id, namespace string) (*api.HostVolume, error)
+	RegisterHostVolume(vol *api.HostVolume) (*api.HostVolumeRegisterResponse, error)
 }
 
 // Reconciler converges a Nomad cluster to the state described in Git.
 type Reconciler struct {
-	cfg    *config.Config
-	git    GitSource
-	nomad  NomadClient
-	log    *slog.Logger
-	filesR func(root, baseDir string) ([]job.Desired, error)
+	cfg      *config.Config
+	git      GitSource
+	nomad    NomadClient
+	log      *slog.Logger
+	discover func(root, baseDir string, nodes volume.NodeResolver) (spec.Set, error)
 
 	mu   sync.Mutex
 	last Result
@@ -50,17 +59,22 @@ type Result struct {
 	Planned   []string // jobs with pending changes (plan mode or diff detected)
 	Pruned    []string
 	Unchanged int
-	Err       error
+
+	VolumesApplied   []string
+	VolumesPlanned   []string // volumes with pending changes
+	VolumesUnchanged int
+
+	Err error
 }
 
 // New builds a Reconciler.
 func New(cfg *config.Config, gitSrc GitSource, nomad NomadClient, log *slog.Logger) *Reconciler {
 	return &Reconciler{
-		cfg:    cfg,
-		git:    gitSrc,
-		nomad:  nomad,
-		log:    log,
-		filesR: job.Discover,
+		cfg:      cfg,
+		git:      gitSrc,
+		nomad:    nomad,
+		log:      log,
+		discover: spec.Discover,
 	}
 }
 
@@ -120,15 +134,24 @@ func (r *Reconciler) reconcile(ctx context.Context) Result {
 	log.Info("synced git", "path", r.cfg.GitPath)
 
 	root, baseDir := r.paths()
-	desired, err := r.filesR(root, baseDir)
+	set, err := r.discover(root, baseDir, volume.NewNodes(r.nomad.Nodes))
 	if err != nil {
 		// Discover returns partial results alongside parse errors; keep going
 		// with what parsed successfully but record the failure.
 		res.Err = err
-		log.Error("job discovery reported errors", "error", err)
+		log.Error("discovery reported errors", "error", err)
 	}
-	log.Info("discovered jobs", "count", len(desired))
+	log.Info("discovered specs", "jobs", len(set.Jobs), "volumes", len(set.Volumes))
 
+	// Register volumes first so jobs that claim them can be placed.
+	for _, p := range r.planVolumes(ctx, set.Volumes) {
+		if err := ctx.Err(); err != nil {
+			return res
+		}
+		r.applyVolume(log, p, &res)
+	}
+
+	desired := set.Jobs
 	desiredIDs := make(map[nsKey]bool, len(desired))
 	for _, d := range desired {
 		ns := d.Namespace(r.cfg.NomadNamespace)
@@ -149,6 +172,9 @@ func (r *Reconciler) reconcile(ctx context.Context) Result {
 		"pending", len(res.Planned),
 		"pruned", len(res.Pruned),
 		"unchanged", res.Unchanged,
+		"volumes_applied", len(res.VolumesApplied),
+		"volumes_pending", len(res.VolumesPlanned),
+		"volumes_unchanged", res.VolumesUnchanged,
 		"duration", time.Since(start).Round(time.Millisecond),
 	)
 	return res

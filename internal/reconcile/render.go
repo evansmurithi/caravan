@@ -49,6 +49,26 @@ func RenderJobDiff(d *api.JobDiff, color bool) string {
 	return strings.TrimRight(b.String(), "\n")
 }
 
+// RenderVolumeDiff renders a host volume plan in the same style as
+// RenderJobDiff.
+func RenderVolumeDiff(p VolumePlan, color bool) string {
+	pt := painter{enabled: color}
+	var b strings.Builder
+
+	kind := "Edited"
+	if p.ID == "" {
+		kind = "Added"
+	}
+	header := fmt.Sprintf("Volume: %q (namespace %s, node %s)", p.Name, p.Namespace, p.Node)
+	if p.ID != "" {
+		header += " id=" + p.ID
+	}
+	writeLine(&b, pt, 0, kind, header)
+	writeFields(&b, pt, 1, p.Fields)
+
+	return strings.TrimRight(b.String(), "\n")
+}
+
 func writeFields(b *strings.Builder, p painter, indent int, fields []*api.FieldDiff) {
 	for _, f := range fields {
 		if f == nil || f.Type == "None" {

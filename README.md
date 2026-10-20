@@ -9,7 +9,9 @@ GitOps for [HashiCorp Nomad](https://www.nomadproject.io/).
 caravan continuously reconciles a Nomad cluster with the job specifications
 stored in a Git repository. It polls the repo, renders your `.nomad`/`.hcl` job
 files, computes a diff against the live cluster using Nomad's native plan API,
-and applies changes so the cluster always matches Git.
+and applies changes so the cluster always matches Git. It can also register
+[dynamic host volumes](#host-volumes) from the same repo, before the jobs that
+use them.
 
 ## How it works
 
@@ -31,16 +33,19 @@ and applies changes so the cluster always matches Git.
 Each reconcile pass:
 
 1. **Sync** — clone or fast-forward the tracked branch of the Git repo.
-2. **Discover** — walk the configured sub-path for `.nomad` / `.hcl` job files.
-3. **Parse** — parse each file locally with Nomad's `jobspec2` package (the same
+2. **Discover** — walk the configured sub-path for `.nomad` / `.hcl` files and
+   classify each as a job or a [host volume](#host-volumes).
+3. **Register volumes** — register new or changed host volumes, so jobs that
+   claim them can be placed.
+4. **Parse** — parse each job file locally with Nomad's `jobspec2` package (the same
    parser `nomad job run` uses), with filesystem functions like `file()` enabled
    and resolved relative to the base directory (see below). Each job is stamped
    with a `caravan.gitops/managed-by` meta label.
-4. **Plan** — call Nomad's plan endpoint to get a structured diff.
-5. **Apply** — in `sync` mode, register jobs that have pending changes. In
+5. **Plan** — call Nomad's plan endpoint to get a structured diff.
+6. **Apply** — in `sync` mode, register jobs that have pending changes. In
    `plan` mode, only report the diff (dry-run).
-6. **Prune** *(optional)* — stop jobs previously managed by caravan that are no
-   longer present in Git.
+7. **Prune** *(optional)* — stop jobs previously managed by caravan that are no
+   longer present in Git. Volumes are never pruned.
 
 HCL is parsed client-side (not via the server's `/v1/jobs/parse` endpoint) so
 that filesystem functions such as `file(...)` — commonly used to inline config
@@ -154,15 +159,22 @@ sync-interval: 30s
 | `--prune` | `CARAVAN_PRUNE` | `false` | Stop managed jobs removed from Git |
 | `--sync-interval` | `CARAVAN_SYNC_INTERVAL` | `1m` | Reconcile frequency |
 | `--once` | `CARAVAN_ONCE` | `false` | Run one pass and exit |
+| `--volume-host-path-prefixes` | `CARAVAN_VOLUME_HOST_PATH_PREFIXES` | — | Comma-separated directories host volumes may register (required for [host volumes](#host-volumes)) |
 | `--log-level` | `CARAVAN_LOG_LEVEL` | `info` | `debug`/`info`/`warn`/`error` |
 | `--log-format` | `CARAVAN_LOG_FORMAT` | `text` | `text` or `json` |
 | `--health-addr` | `CARAVAN_HEALTH_ADDR` | `:8080` | Health server address (empty to disable) |
 
 ## Job repository layout
 
-Point `--git-path` at a directory of Nomad job files. Any file ending in
-`.nomad` or `.hcl` (recursively, excluding hidden/`.git` dirs) is treated as a
-job spec. Each file must define exactly one job with a unique ID.
+Point `--git-path` at a directory of Nomad specs. Every file ending in `.nomad`
+or `.hcl` (recursively, excluding hidden/`.git` dirs) is classified by its
+content:
+
+- a top-level `job` block makes it a **job** spec. Each file must define exactly
+  one job with a unique ID.
+- a top-level `type = "host"` makes it a [**host volume**](#host-volumes) spec.
+- anything else is an error, reported on every pass until the file is fixed or
+  renamed. Other files in the same pass are still applied.
 
 ```
 nomad-jobs/
@@ -211,9 +223,102 @@ the job spec to Nomad. A side benefit: changing `alerts.yaml` alone changes the
 rendered job, so caravan's next plan detects a diff and re-applies — config-only
 changes are reconciled just like changes to the job HCL itself.
 
-Only `.nomad` and `.hcl` files are treated as job specs; config files such as
-`.yaml`, `.alloy`, `.json`, etc. are ignored by the job scanner. Avoid using the
-`.hcl` extension for non-job config files, or they'll be parsed as jobs.
+Only `.nomad` and `.hcl` files are scanned; config files such as `.yaml`,
+`.alloy`, `.json`, etc. are ignored. Don't use the `.hcl` extension for config
+files that are neither jobs nor volumes, or every pass will report them as
+errors.
+
+## Host volumes
+
+caravan registers Nomad [dynamic host
+volumes](https://developer.hashicorp.com/nomad/docs/other-specifications/volume/host)
+that point at directories which already exist on a node, the same as
+`nomad volume register`. Keep each spec next to the job that uses it:
+
+```hcl
+# nomad/app/app-data.volume.hcl
+type      = "host"
+name      = "app-data"
+namespace = "default"          # optional; defaults to --nomad-namespace
+node_id   = node("kamrui")     # or a literal node ID
+host_path = "/mnt/data1/app"
+capacity  = "10GiB"            # optional
+
+capability {                   # optional; Nomad's default is shown
+  access_mode     = "single-node-writer"
+  attachment_mode = "file-system"
+}
+
+parameters {                   # optional
+  owner = "app"
+}
+```
+
+- **Register mode only.** A spec needs `host_path` and must not set
+  `plugin_id`; caravan does not create volumes through plugins. `id`,
+  `capacity_min`, `capacity_max`, `constraint` and `node_pool` are rejected.
+- **`node("<name>")`** resolves a node name to its ID through the Nomad nodes
+  API, so specs don't hardcode node UUIDs. If a reinstalled node left an old
+  `down` node with the same name, the live one wins; any other ambiguity is an
+  error.
+- **Volumes before jobs.** Each pass registers volumes first, so a new job and
+  its new volume can land in the same commit.
+- **Updates in place.** caravan finds the existing volume by namespace, name and
+  node, and passes its ID so Nomad updates it rather than reporting a conflict.
+  If nothing changed, no API call is made. Nomad refuses to update a volume that
+  a running allocation has claimed, so such an update fails (and is retried)
+  until the allocation stops.
+- **Immutable fields.** A volume's name, type and node can't change. caravan
+  stamps each volume with `caravan.gitops/managed-by` and
+  `caravan.gitops/source` (the spec's path) in `parameters`. If a spec's name or
+  node changes while a volume from the same file still exists, caravan reports
+  an error instead of registering a second volume. Deregister the old one by
+  hand. A volume that a plugin created is also an error.
+- **Never deleted.** caravan has no code path that deregisters or deletes a
+  volume, even with `--prune`. Removing a spec from Git leaves its volume in
+  place; remove it with `nomad volume delete -type host` once nothing uses it.
+
+### Host path allowlist
+
+Registering a host volume exposes any directory on the node to the jobs that
+can claim it, which is root-equivalent on that node, and Nomad ACLs cannot
+restrict which paths are registered. caravan therefore refuses every volume
+unless `--volume-host-path-prefixes` (`CARAVAN_VOLUME_HOST_PATH_PREFIXES`) is
+set:
+
+```bash
+CARAVAN_VOLUME_HOST_PATH_PREFIXES=/mnt/data1,/mnt/storage
+```
+
+A `host_path` must be absolute and must not contain `..`. After
+`filepath.Clean`, it must be one of the prefixes or sit beneath one
+(`/mnt/data1/app` passes; `/mnt/data10` and `/etc` don't). The cleaned path is
+what gets registered. The check is lexical, so don't leave symlinks under the
+allowed prefixes that point elsewhere.
+
+### ACL policy
+
+The token caravan uses needs, for job sync plus volumes:
+
+```hcl
+namespace "default" {
+  policy       = "read"
+  # host-volume-register implies host-volume-read and host-volume-create.
+  capabilities = ["submit-job", "host-volume-register"]
+}
+
+# Lets submitted jobs mount host volumes.
+host_volume "*" {
+  policy = "write"
+}
+
+# node() resolves node names through the nodes API.
+node {
+  policy = "read"
+}
+```
+
+Repeat the `namespace` block for every namespace your specs use.
 
 ## Pruning
 
@@ -227,7 +332,9 @@ When running continuously, caravan exposes:
 
 - `GET /healthz` — liveness (always `200` once serving)
 - `GET /readyz` — readiness (`200` after the first reconcile)
-- `GET /status` — JSON summary of the last reconcile (commit, applied/pending/pruned jobs, error)
+- `GET /status` — JSON summary of the last reconcile: commit, applied/pending/pruned
+  jobs, a `volumes` object with applied/pending volumes (`namespace/name@node`)
+  and an unchanged count, and the first error
 
 ## Deploying to Nomad
 
