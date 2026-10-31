@@ -186,6 +186,29 @@ func TestNamespaceComesFromJobSpec(t *testing.T) {
 	}
 }
 
+func TestDiscoverRejectsUnusableScanPath(t *testing.T) {
+	dir := t.TempDir()
+	file := filepath.Join(dir, "job.nomad")
+	mustWrite(t, file, jobWithFileFunc)
+
+	empty := t.TempDir()
+	onlyConfig := t.TempDir()
+	mustWrite(t, filepath.Join(onlyConfig, "config.yaml"), "a: b")
+
+	for name, root := range map[string]string{
+		"missing":     filepath.Join(dir, "does-not-exist"),
+		"file":        file,
+		"empty":       empty,
+		"no job file": onlyConfig,
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, err := Discover(root, root); err == nil {
+				t.Fatalf("expected an error for %s", root)
+			}
+		})
+	}
+}
+
 func mustWrite(t *testing.T, path, contents string) {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {

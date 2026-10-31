@@ -4,6 +4,7 @@ package config
 
 import (
 	"fmt"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -159,6 +160,9 @@ func Load(args []string) (*Config, error) {
 func (c *Config) validate() error {
 	if c.GitURL == "" {
 		return fmt.Errorf("git-url is required (set --git-url or CARAVAN_GIT_URL)")
+	}
+	if !filepath.IsLocal(c.GitPath) {
+		return fmt.Errorf("invalid git-path %q: must be a non-empty path relative to the repository root, inside the repository", c.GitPath)
 	}
 	if c.Mode != ModeSync && c.Mode != ModePlan {
 		return fmt.Errorf("invalid mode %q: must be %q or %q", c.Mode, ModeSync, ModePlan)

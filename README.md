@@ -141,7 +141,7 @@ sync-interval: 30s
 | `--config` | — | — | Path to a config file (YAML/TOML/JSON) |
 | `--git-url` | `CARAVAN_GIT_URL` | — (required) | Git repository URL |
 | `--git-branch` | `CARAVAN_GIT_BRANCH` | `main` | Branch to track |
-| `--git-path` | `CARAVAN_GIT_PATH` | `.` | Sub-path to scan for job specs |
+| `--git-path` | `CARAVAN_GIT_PATH` | `.` | Sub-path to scan for job specs; must be inside the repo and contain at least one job file |
 | `--git-token` | `CARAVAN_GIT_TOKEN` | — | Access token for HTTP(S) auth |
 | `--git-ssh-key` | `CARAVAN_GIT_SSH_KEY` | — | Path to SSH private key |
 | `--git-ssh-passphrase` | `CARAVAN_GIT_SSH_PASSPHRASE` | — | Passphrase for the SSH private key |
@@ -224,6 +224,11 @@ never touched. In `plan` mode, orphans are reported but not stopped.
 Pruning is skipped for any pass where job discovery reports an error, such as an
 HCL syntax error, so a job whose file can't be parsed isn't mistaken for one
 removed from Git. Jobs that did parse are still applied.
+
+`--git-path` must be a directory inside the repository containing at least one
+job file. A missing or empty path is a discovery error, so emptying the directory
+does not prune anything: stop the remaining jobs yourself, or remove them from
+Git while at least one job file remains.
 
 ## Health & status
 

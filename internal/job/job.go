@@ -53,6 +53,11 @@ func Discover(root, baseDir string) ([]Desired, error) {
 	if err != nil {
 		return nil, err
 	}
+	// An empty scan path more likely means a misconfigured path or a bad commit
+	// than an intent to remove every job, so it must not read as "no jobs".
+	if len(files) == 0 {
+		return nil, fmt.Errorf("no job files (.nomad, .hcl) found in %s", root)
+	}
 
 	var (
 		desired []Desired
@@ -121,8 +126,16 @@ func parseFile(path, baseDir string) (*api.Job, error) {
 }
 
 func findJobFiles(root string) ([]string, error) {
+	info, err := os.Stat(root)
+	if err != nil {
+		return nil, fmt.Errorf("scanning %s: %w", root, err)
+	}
+	if !info.IsDir() {
+		return nil, fmt.Errorf("scanning %s: not a directory", root)
+	}
+
 	var files []string
-	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+	err = filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
