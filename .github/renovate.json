@@ -7,12 +7,18 @@
     "helpers:pinGitHubActionDigests"
   ],
   "labels": ["dependencies"],
-  "schedule": ["before 6am on monday"],
+  "schedule": ["on monday"],
   "postUpdateOptions": ["gomodTidy"],
   "packageRules": [
     {
       "matchManagers": ["gomod"],
       "groupName": "go modules"
+    },
+    {
+      "matchManagers": ["gomod"],
+      "matchDepNames": ["go"],
+      "matchDepTypes": ["golang"],
+      "rangeStrategy": "bump"
     },
     {
       "matchManagers": ["github-actions"],
