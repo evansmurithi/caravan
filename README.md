@@ -221,6 +221,10 @@ With `--prune`, caravan stops any job carrying its `caravan.gitops/managed-by`
 meta label that is no longer defined in Git. Jobs created outside of caravan are
 never touched. In `plan` mode, orphans are reported but not stopped.
 
+Pruning is skipped for any pass where job discovery reports an error, such as an
+HCL syntax error, so a job whose file can't be parsed isn't mistaken for one
+removed from Git. Jobs that did parse are still applied.
+
 ## Health & status
 
 When running continuously, caravan exposes:
