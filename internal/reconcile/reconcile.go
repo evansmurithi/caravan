@@ -120,12 +120,12 @@ func (r *Reconciler) reconcile(ctx context.Context) Result {
 	log.Info("synced git", "path", r.cfg.GitPath)
 
 	root, baseDir := r.paths()
-	desired, err := r.filesR(root, baseDir)
-	if err != nil {
+	desired, discoverErr := r.filesR(root, baseDir)
+	if discoverErr != nil {
 		// Discover returns partial results alongside parse errors; keep going
 		// with what parsed successfully but record the failure.
-		res.Err = err
-		log.Error("job discovery reported errors", "error", err)
+		res.Err = discoverErr
+		log.Error("job discovery reported errors", "error", discoverErr)
 	}
 	log.Info("discovered jobs", "count", len(desired))
 
@@ -141,7 +141,13 @@ func (r *Reconciler) reconcile(ctx context.Context) Result {
 	}
 
 	if r.cfg.Prune {
-		r.prune(ctx, log, desiredIDs, &res)
+		// A job whose file failed to parse is missing from desiredIDs but still
+		// exists in Git, so pruning from a partial result would stop it.
+		if discoverErr != nil {
+			log.Warn("skipping prune because job discovery was incomplete")
+		} else {
+			r.prune(ctx, log, desiredIDs, &res)
+		}
 	}
 
 	log.Info("reconcile complete",

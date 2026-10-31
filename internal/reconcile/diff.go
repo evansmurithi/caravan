@@ -59,7 +59,9 @@ func (r *Reconciler) Diff(ctx context.Context) (commit string, plans []JobPlan, 
 		plans = append(plans, p)
 	}
 
-	if r.cfg.Prune {
+	// Orphans can't be identified from a partial result: a job whose file failed
+	// to parse would be wrongly reported as removed from Git.
+	if r.cfg.Prune && discoverErr == nil {
 		plans = append(plans, r.orphans(ctx, desiredIDs)...)
 	}
 

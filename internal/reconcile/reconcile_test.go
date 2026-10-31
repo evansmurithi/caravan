@@ -2,6 +2,7 @@ package reconcile
 
 import (
 	"context"
+	"errors"
 	"io"
 	"log/slog"
 	"testing"
@@ -176,5 +177,55 @@ func TestReconcilePrunesOrphans(t *testing.T) {
 	}
 	if len(nomad.stopped) != 1 || nomad.stopped[0] != "orphan" {
 		t.Fatalf("expected only 'orphan' pruned, got %v", nomad.stopped)
+	}
+}
+
+func TestReconcileSkipsPruneWhenDiscoveryFails(t *testing.T) {
+	cfg := baseConfig()
+	cfg.Prune = true
+
+	discoverErr := errors.New("failed to parse 1 job file(s)")
+	nomad := &fakeNomad{
+		planDiffType: map[string]string{"changed": "Edited"},
+		existing: []*api.JobListStub{
+			{ID: "unparseable", Meta: map[string]string{config.ManagedByLabel: config.ManagedByValue}},
+		},
+	}
+	r := newTestReconciler(cfg, nomad, nil)
+	r.filesR = func(string, string) ([]job.Desired, error) {
+		return []job.Desired{desiredJob("changed")}, discoverErr
+	}
+
+	res := r.reconcile(context.Background())
+	if !errors.Is(res.Err, discoverErr) {
+		t.Fatalf("expected discovery error, got %v", res.Err)
+	}
+	if len(nomad.stopped) != 0 {
+		t.Fatalf("must not prune after failed discovery, got %v", nomad.stopped)
+	}
+	if len(nomad.registered) != 1 || nomad.registered[0] != "changed" {
+		t.Fatalf("expected jobs that parsed to still apply, got %v", nomad.registered)
+	}
+}
+
+func TestDiffOmitsOrphansWhenDiscoveryFails(t *testing.T) {
+	cfg := baseConfig()
+	cfg.Prune = true
+
+	discoverErr := errors.New("failed to parse 1 job file(s)")
+	nomad := &fakeNomad{
+		existing: []*api.JobListStub{
+			{ID: "unparseable", Meta: map[string]string{config.ManagedByLabel: config.ManagedByValue}},
+		},
+	}
+	r := newTestReconciler(cfg, nomad, nil)
+	r.filesR = func(string, string) ([]job.Desired, error) { return nil, discoverErr }
+
+	_, plans, err := r.Diff(context.Background())
+	if !errors.Is(err, discoverErr) {
+		t.Fatalf("expected discovery error, got %v", err)
+	}
+	if len(plans) != 0 {
+		t.Fatalf("expected no orphans after failed discovery, got %+v", plans)
 	}
 }

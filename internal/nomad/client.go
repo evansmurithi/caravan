@@ -75,9 +75,11 @@ func (c *Client) Info(jobID, namespace string) (*api.Job, error) {
 	return job, nil
 }
 
-// List returns job stubs in the given namespace ("*" for all namespaces).
+// List returns job stubs in the given namespace ("*" for all namespaces). Job
+// meta is requested explicitly because Nomad omits it from stubs by default.
 func (c *Client) List(namespace string) ([]*api.JobListStub, error) {
-	stubs, _, err := c.api.Jobs().List(c.queryOpts(namespace))
+	opts := &api.JobListOptions{Fields: &api.JobListFields{Meta: true}}
+	stubs, _, err := c.api.Jobs().ListOptions(opts, c.queryOpts(namespace))
 	if err != nil {
 		return nil, fmt.Errorf("nomad: listing jobs: %w", err)
 	}
