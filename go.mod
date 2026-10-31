@@ -1,11 +1,11 @@
 module github.com/evansmurithi/caravan
 
-go 1.26.10
+go 1.27.3
 
 require (
 	github.com/go-git/go-git/v5 v5.19.3
 	github.com/hashicorp/nomad v1.11.3
-	github.com/hashicorp/nomad/api v0.0.0-20260707141449-247bf86dd082
+	github.com/hashicorp/nomad/api v0.0.0-20261030143740-64cdf9f9a00a
 	github.com/spf13/pflag v1.0.10
 	github.com/spf13/viper v1.21.0
 )
@@ -30,10 +30,8 @@ require (
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/gorilla/websocket v1.5.3 // indirect
 	github.com/hashicorp/cronexpr v1.1.3 // indirect
-	github.com/hashicorp/errwrap v1.1.0 // indirect
 	github.com/hashicorp/go-cleanhttp v0.5.2 // indirect
 	github.com/hashicorp/go-cty-funcs v0.1.0 // indirect
-	github.com/hashicorp/go-multierror v1.1.1 // indirect
 	github.com/hashicorp/go-rootcerts v1.0.2 // indirect
 	github.com/hashicorp/hcl/v2 v2.20.2-nomad-1 // indirect
 	github.com/jbenet/go-context v0.0.0-20150711004518-d14ea06fba99 // indirect
