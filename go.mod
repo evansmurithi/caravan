@@ -1,12 +1,12 @@
 module github.com/evansmurithi/caravan
 
-go 1.27.3
+go 1.27.4
 
 require (
 	github.com/go-git/go-git/v5 v5.19.3
 	github.com/hashicorp/nomad v1.11.3
-	github.com/hashicorp/nomad/api v0.0.0-20261030143740-64cdf9f9a00a
-	github.com/spf13/pflag v1.0.10
+	github.com/hashicorp/nomad/api v0.0.0-20261116114045-359056d76692
+	github.com/spf13/pflag v1.1.0
 	github.com/spf13/viper v1.21.0
 )
 
